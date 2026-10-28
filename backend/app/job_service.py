@@ -1,14 +1,18 @@
-import os
 import asyncio
+import logging
+import re
+from html import unescape
+from typing import Any
 
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
 
-JSEARCH_API_KEY = os.getenv("JSEARCH_API_KEY")
-JSEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
+logger = logging.getLogger(__name__)
 
+HIMALAYAS_API_URL = "https://himalayas.app/jobs/api"
+HIMALAYAS_SEARCH_URL = "https://himalayas.app/jobs/api/search"
+
+# Keep the same function signature your existing backend uses.
 IT_JOB_QUERIES = [
     "Software Engineer",
     "Software Developer",
@@ -44,88 +48,102 @@ IT_JOB_QUERIES = [
 ]
 
 
-async def _search_single_query(
+def _clean_description(value: Any) -> str:
+    """Convert an HTML job description into readable plain text."""
+    if not isinstance(value, str):
+        return ""
+
+    value = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</li>", "\n", value)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = unescape(value)
+    value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"\n\s*\n+", "\n\n", value)
+
+    return value.strip()
+
+
+def _normalize_job(item: dict[str, Any]) -> dict[str, Any]:
+    """Convert a Himalayas job into the format used by JobMatch AI."""
+
+    restrictions = item.get("locationRestrictions") or []
+
+    if isinstance(restrictions, list):
+        restriction_names = [
+            entry.get("name", "")
+            for entry in restrictions
+            if isinstance(entry, dict) and entry.get("name")
+        ]
+        location = ", ".join(restriction_names) or "Remote"
+    else:
+        location = "Remote"
+
+    title = item.get("title") or "Untitled position"
+    company = item.get("companyName") or "Unknown company"
+
+    return {
+        "id": item.get("guid") or (
+            f"{company}-{title}".lower().replace(" ", "-")
+        ),
+        "title": title,
+        "company": company,
+        "location": location,
+        "description": _clean_description(
+            item.get("description") or item.get("excerpt") or ""
+        ),
+        "employment_type": item.get("employmentType"),
+        "is_remote": True,
+        "posted_at": item.get("pubDate"),
+        "apply_url": item.get("applicationLink") or item.get("guid"),
+        "source": "Himalayas",
+        "company_logo": item.get("companyLogo"),
+        "salary_min": item.get("minSalary"),
+        "salary_max": item.get("maxSalary"),
+        "salary_currency": item.get("currency"),
+        "salary_period": item.get("salaryPeriod"),
+        "categories": item.get("categories") or [],
+        "seniority": item.get("seniority") or [],
+        "location_restrictions": restrictions,
+    }
+
+
+async def _fetch_himalayas_jobs(
     client: httpx.AsyncClient,
-    query: str,
-    location: str,
-    country: str,
-    page: int,
-) -> list[dict]:
+    query: str = "",
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Fetch jobs from the public Himalayas API."""
 
-    params = {
-        "query": f"{query} in {location}",
-        "page": str(page),
-        "num_pages": "1",
-        "date_posted": "all",
-        "country": country,
-        "language": "en",
-    }
+    limit = max(1, min(limit, 20))
 
-    headers = {
-        "X-RapidAPI-Key": JSEARCH_API_KEY or "",
-        "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-    }
-
-    response = await client.get(
-        JSEARCH_URL,
-        params=params,
-        headers=headers,
-    )
-
-    print(
-        f"JSearch query={query!r}, "
-        f"status={response.status_code}"
-    )
+    if query.strip():
+        # The official search endpoint supports keyword filtering.
+        response = await client.get(
+            HIMALAYAS_SEARCH_URL,
+            params={
+                "q": query.strip(),
+                "page": 1,
+            },
+        )
+    else:
+        response = await client.get(
+            HIMALAYAS_API_URL,
+            params={"limit": limit},
+        )
 
     response.raise_for_status()
 
     payload = response.json()
+    items = payload.get("jobs", [])
 
-    print("JSearch response status:", payload.get("status"))
-
-    if payload.get("status") != "OK":
-        print("JSearch API error:", payload.get("error", payload))
+    if not isinstance(items, list):
+        logger.warning("Himalayas returned an unexpected jobs format.")
         return []
-    
-    print("JSearch jobs returned:", len(payload.get("data", [])))
 
-    data = payload.get("data", [])
-
-    if isinstance(data, dict):
-        items = data.get("jobs", [])
-    elif isinstance(data, list):
-        items = data
-    else:
-        items = []
-
-    jobs = []
-
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-
-        jobs.append({
-            "id": item.get("job_id"),
-            "title": item.get("job_title") or "Untitled position",
-            "company": item.get("employer_name") or "Unknown company",
-            "location": ", ".join(
-                str(part)
-                for part in [
-                    item.get("job_city"),
-                    item.get("job_state"),
-                    item.get("job_country"),
-                ]
-                if part
-            ) or "Location not specified",
-            "description": item.get("job_description") or "",
-            "employment_type": item.get("job_employment_type"),
-            "is_remote": item.get("job_is_remote", False),
-            "posted_at": item.get("job_posted_at_datetime_utc"),
-            "apply_url": item.get("job_apply_link"),
-            "source": item.get("job_publisher"),
-        })
-
-    return jobs
+    return [
+        _normalize_job(item)
+        for item in items[:limit]
+        if isinstance(item, dict)
+    ]
 
 
 async def search_jobs(
@@ -134,69 +152,80 @@ async def search_jobs(
     page: int = 1,
     country: str = "lk",
     all_it_jobs: bool = False,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
+    """
+    Search remote jobs using the free Himalayas API.
 
-    if not JSEARCH_API_KEY:
-        raise RuntimeError(
-            "JSEARCH_API_KEY is missing. "
-            "Add it to the backend .env file."
-        )
+    The existing arguments are retained for compatibility with the
+    current JobMatch AI backend.
 
-    # Broad IT search or a targeted search.
-    if all_it_jobs:
-        queries = IT_JOB_QUERIES
-    else:
-        queries = [query.strip() or "IT jobs"]
+    Note:
+    - Himalayas mainly lists remote jobs.
+    - The location and country arguments are retained for compatibility;
+      they do not filter the unfiltered browse endpoint.
+    - Search results are limited to 20 jobs per API request.
+    """
 
-    # Avoid excessive simultaneous API requests.
-    semaphore = asyncio.Semaphore(3)
+    del location, country  # Not used by the browse endpoint.
 
-    async with httpx.AsyncClient(timeout=25.0) as client:
+    if page < 1:
+        page = 1
 
-        async def safe_search(search_query: str):
-            async with semaphore:
-                try:
-                    return await _search_single_query(
-                        client=client,
-                        query=search_query,
-                        location=location,
-                        country=country,
-                        page=page,
-                    )
-                except httpx.HTTPStatusError as error:
-                    print(
-                        f"JSearch failed for {search_query!r}: "
-                        f"HTTP {error.response.status_code}"
-                    )
-                    return []
-                except httpx.RequestError as error:
-                    print(
-                        f"JSearch connection error for "
-                        f"{search_query!r}: {error}"
-                    )
-                    return []
+    timeout = httpx.Timeout(20.0)
 
-        results = await asyncio.gather(
-            *(safe_search(search_query) for search_query in queries)
-        )
-
-    # Combine results and remove duplicate jobs.
-    unique_jobs = {}
-
-    for result_list in results:
-        for job in result_list:
-            job_id = job.get("id")
-
-            if job_id:
-                unique_key = str(job_id)
-            else:
-                unique_key = (
-                    f"{job.get('title', '').lower()}|"
-                    f"{job.get('company', '').lower()}|"
-                    f"{job.get('location', '').lower()}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if all_it_jobs:
+                # Fetch a single page to avoid making many API requests.
+                jobs = await _fetch_himalayas_jobs(
+                    client=client,
+                    limit=20,
                 )
 
-            unique_jobs[unique_key] = job
+                # Retain jobs whose titles look relevant to IT.
+                relevant_terms = (
+                    "software", "developer", "engineer", "python",
+                    "java", "data", "machine learning", "artificial",
+                    "ai ", "cybersecurity", "security", "cloud",
+                    "devops", "frontend", "backend", "full stack",
+                    "qa ", "analyst", "technology", "technical",
+                    "it intern",
+                )
 
-    return list(unique_jobs.values())
+                jobs = [
+                    job for job in jobs
+                    if any(
+                        term in job["title"].lower()
+                        for term in relevant_terms
+                    )
+                ]
 
+                return jobs
+
+            search_query = query.strip()
+
+            if not search_query:
+                return await _fetch_himalayas_jobs(
+                    client=client,
+                    limit=20,
+                )
+
+            return await _fetch_himalayas_jobs(
+                client=client,
+                query=search_query,
+                limit=20,
+            )
+
+    except httpx.HTTPStatusError as error:
+        logger.warning(
+            "Himalayas API returned HTTP %s.",
+            error.response.status_code,
+        )
+        return []
+
+    except (httpx.RequestError, ValueError) as error:
+        logger.warning(
+            "Could not retrieve or parse Himalayas jobs: %s",
+            type(error).__name__,
+        )
+        return []

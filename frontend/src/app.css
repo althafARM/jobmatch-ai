@@ -320,7 +320,6 @@ h4 {
 .dashboard-main {
   min-width: 0;
   min-height: 100vh;
-  margin-left: var(--sidebar-width);
   padding: 0 34px 40px;
 }
 
@@ -2156,6 +2155,10 @@ textarea:focus-visible {
 .dark-mode .main-content,
 .dark-mode .dashboard-main {
   background: var(--background);
+}
+
+.dark-mode .rf-title-bar h3{
+  color: black;
 }
 
 .dark-mode h1,

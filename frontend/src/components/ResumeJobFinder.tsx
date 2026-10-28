@@ -105,77 +105,10 @@ export default function ResumeJobFinder() {
 
   return (
     <main className="resume-finder">
-      <section className="rf-hero">
-        <span className="rf-eyebrow">YOUR CAREER, MATCHED</span>
-        <h1>Find jobs that fit <span>your skills.</span></h1>
-        <p>
-          Upload your resume. We’ll identify your skills and search for
-          matching job opportunities in Sri Lanka.
-        </p>
-      </section>
+      
 
-      <section className="rf-upload-card">
-        <div className="rf-card-heading">
-          <div>
-            <span className="rf-step">STEP 01</span>
-            <h2>Upload your resume</h2>
-            <p><p>Upload your resume in PDF, DOCX, JPG, JPEG, or PNG format. Maximum size: 5 MB.</p></p>
-          </div>
-          <span className="rf-icon">↑</span>
-        </div>
 
-        <label className="rf-file-picker">
-          <input
-            type="file"
-            accept=".pdf,.docx,.jpg,.jpeg,.png,image/*"
-            onChange={(event) => {
-              setFile(event.target.files?.[0] || null);
-              setError("");
-              setJobs([]);
-              setSkills([]);
-              setSearched(false);
-            }}
-          />
-          <span className="rf-file-symbol">＋</span>
-          <strong>
-            {file ? file.name : "Choose your resume"}
-          </strong>
-          <span>
-            {file
-              ? `${(file.size / 1024).toFixed(0)} KB selected`
-              : "Click to browse PDF, DOCX, JPG, JPEG, or PNG files"}
-          </span>
-        </label>
-
-        <button
-          className="rf-search-button"
-          onClick={findJobs}
-          disabled={loading || !file}
-        >
-          {loading ? "Finding matching jobs..." : "Find My Matching Jobs"}
-          {!loading && <span>→</span>}
-        </button>
-
-        {error && (
-          <div className="rf-error" role="alert">
-            {error}
-          </div>
-        )}
-      </section>
-
-      {skills.length > 0 && (
-        <section className="rf-results-section">
-          <span className="rf-eyebrow">STEP 02</span>
-          <h2>Skills found in your resume</h2>
-          <div className="rf-skills">
-            {skills.map((skill) => (
-              <span className="rf-skill" key={skill}>
-                ✓ {skill}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
+      
 
       {searched && (
         <section className="rf-results-section">

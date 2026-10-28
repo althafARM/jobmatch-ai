@@ -10,7 +10,6 @@ from app.skill_matcher import filter_jobs_by_resume_skills
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-import magic
 
 
 
@@ -186,7 +185,6 @@ async def get_live_jobs(
             status_code=502,
             detail="Could not connect to the job provider.",
         ) from error
-
 @app.post("/api/resume/skills")
 @limiter.limit("30/minute")
 async def analyze_resume_skills(
@@ -195,7 +193,7 @@ async def analyze_resume_skills(
 ):
     filename = file.filename or ""
 
-    # Allow PDF, DOCX, JPG, JPEG, and PNG files.
+    # 1. Validate the file extension.
     allowed_extensions = (".pdf", ".docx", ".png", ".jpg", ".jpeg")
 
     if not filename.lower().endswith(allowed_extensions):
@@ -204,59 +202,64 @@ async def analyze_resume_skills(
             detail="Please upload a PDF, DOCX, JPG, JPEG, or PNG resume.",
         )
 
-    # Read the uploaded file.
+    # 2. Read the uploaded file.
     content = await file.read()
 
-    # Limit uploads to 5 MB.
+    # 3. Check the file size (5 MB maximum).
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(
             status_code=413,
             detail="Resume must be smaller than 5 MB.",
         )
 
+    # 4. Check for an empty file.
     if not content:
         raise HTTPException(
             status_code=400,
             detail="The uploaded resume is empty.",
         )
 
+    # 5. Extract resume text and identify skills.
     try:
-        # Extract text from the uploaded resume.
         text = extract_resume_text(filename, content)
 
-        if not text.strip():
+        if not text or not text.strip():
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "No readable text was found. "
-                    "For image resumes, check the image quality "
-                    "and ensure Tesseract OCR is installed."
+                    "No readable text was found in this resume. "
+                    "Please upload a clearer image or document."
                 ),
             )
 
-        # Find skills in the extracted text.
         skills = extract_skills(text)
+
+        # 6. Return the result.
+        return {
+            "success": True,
+            "filename": filename,
+            "skills": skills,
+            "skills_count": len(skills),
+        }
 
     except HTTPException:
         raise
 
-    except Exception:
-        print("Resume extraction failed.")
+    except Exception as error:
+        # Print the actual error in the backend terminal.
+        print(
+            f"Resume extraction failed for {filename}: "
+            f"{type(error).__name__}: {error}"
+        )
 
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            "Could not read this resume. "
-            "Please check the file format and try again."
-        ),
-    )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Could not read this resume. "
+                "Please check the file format and try again."
+            ),
+        ) from error
 
-    return {
-        "success": True,
-        "filename": filename,
-        "skills": skills,
-        "skills_count": len(skills),
-    }
 
 
 class ResumeJobMatchRequest(BaseModel):
