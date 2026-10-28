@@ -1834,8 +1834,8 @@ textarea:focus-visible {
 
   .main-content,
   .dashboard-main {
-    padding-right: 24px;
-    padding-left: 24px;
+    padding-right: 10px;
+    padding-left: 10px;
   }
 
   .stats-grid,
@@ -2372,8 +2372,7 @@ textarea:focus-visible {
 
 .dark-mode .brand-name,
 .dark-mode .sidebar-label,
-.dark-mode .nav-item,
-.dark-mode .sidebar-help-text strong {
+.dark-mode .nav-item{
   color: #e5e7eb;
 }
 

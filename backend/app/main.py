@@ -2,11 +2,17 @@ import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from app.job_service import search_jobs
 from fastapi import UploadFile, File
 from app.resume_service import extract_resume_text, extract_skills
 from app.skill_matcher import filter_jobs_by_resume_skills
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+import magic
+
+
 
 app = FastAPI(
     title="JobMatch AI API",
@@ -14,13 +20,25 @@ app = FastAPI(
     version="1.0.0",
 )
 
+limiter = Limiter(key_func=get_remote_address)
+
+app.state.limiter = limiter
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler,
+)
+
 # Development CORS settings. Restrict origins before production deployment.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://jobmatch-ai.vercel.app",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 class Job(BaseModel):
@@ -89,7 +107,8 @@ def get_jobs():
     return JOBS
 
 @app.post("/api/recommend")
-def recommend_jobs(payload: RecommendRequest):
+@limiter.limit("30/minute")
+def recommend_jobs(request: Request, payload: RecommendRequest):
     user_skills = {skill.strip().lower() for skill in payload.skills if skill.strip()}
     results = []
     for job in JOBS:
@@ -99,7 +118,9 @@ def recommend_jobs(payload: RecommendRequest):
     return sorted(results, key=lambda item: item["matchScore"], reverse=True)
 
 @app.get("/api/jobs/live")
+@limiter.limit("30/minute")
 async def get_live_jobs(
+    request: Request,
     query: str = Query(
         default="AI engineer",
         min_length=2,
@@ -132,15 +153,17 @@ async def get_live_jobs(
         }
 
     except RuntimeError as error:
+        print("Job provider configuration or service error:", repr(error))
+
         raise HTTPException(
             status_code=503,
-            detail=str(error),
+            detail="The live job service is temporarily unavailable.",
         ) from error
 
-    except httpx.TimeoutException as error:
+    except httpx.RequestError as error:
         raise HTTPException(
-            status_code=504,
-            detail="The job provider took too long to respond.",
+            status_code=502,
+            detail="Could not connect to the job provider.",
         ) from error
 
     except httpx.HTTPStatusError as error:
@@ -165,7 +188,9 @@ async def get_live_jobs(
         ) from error
 
 @app.post("/api/resume/skills")
+@limiter.limit("30/minute")
 async def analyze_resume_skills(
+    request: Request,
     file: UploadFile = File(...),
 ):
     filename = file.filename or ""
@@ -215,13 +240,16 @@ async def analyze_resume_skills(
     except HTTPException:
         raise
 
-    except Exception as error:
-        print("RESUME EXTRACTION ERROR:", repr(error))
+    except Exception:
+        print("Resume extraction failed.")
 
-        raise HTTPException(
-            status_code=400,
-            detail=f"Could not read resume: {str(error)}",
-        ) from error
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Could not read this resume. "
+            "Please check the file format and try again."
+        ),
+    )
 
     return {
         "success": True,
@@ -239,7 +267,9 @@ class ResumeJobMatchRequest(BaseModel):
 
 
 @app.post("/api/jobs/match-resume")
+@limiter.limit("30/minute")
 async def match_jobs_to_resume(
+    request: Request,
     payload: ResumeJobMatchRequest,
 ):
     resume_skills = list({

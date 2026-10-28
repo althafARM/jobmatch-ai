@@ -356,20 +356,13 @@ function App() {
   return (
     <div className={`app dashboard-layout ${darkMode ? "dark-mode" : ""}`}>
       <aside className="sidebar">
-        <button
-          className="brand"
-          type="button"
-          onClick={() => setActivePage("Dashboard")}
-          aria-label="Go to JobMatch AI dashboard"
-        >
-          <span className="brand-icon" aria-hidden="true">
+        
+        <span className="brand-icon" aria-hidden="true">
             J
           </span>
-
-          <span className="brand-name">
+        <span className="brand-name">
             JobMatch<span>AI</span>
           </span>
-        </button>
 
         <div className="sidebar-section">
           <span className="sidebar-label">WORKSPACE</span>
@@ -408,24 +401,8 @@ function App() {
             <strong>Need a little help?</strong>
             <p>Keep moving toward your goals.</p>
           </div>
-
-          <button
-            className="help-button"
-            type="button"
-            onClick={() =>
-              window.alert(
-                "Welcome to JobMatch AI! Use the sidebar to explore jobs and resume-matching features."
-              )
-            }
-          >
-            Get help
-          </button>
         </div>
 
-        <div className="sidebar-footer">
-          <span className="sidebar-footer-dot" />
-          <span>Made for your next step</span>
-        </div>
       </aside>
 
       <main className="dashboard-main">
